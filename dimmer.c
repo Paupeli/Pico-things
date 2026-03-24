@@ -2,9 +2,9 @@
 #include "pico/stdlib.h"
 #include "hardware/pwm.h"
 
-#define SW0_PIN 7
+#define SW0_PIN 9
 #define SW1_PIN 8
-#define SW2_PIN 9
+#define SW2_PIN 7
 
 #define PWM_WRAP 999 //1kHz frequency 1000-1
 #define STEP 2 //speed of dimming
@@ -79,8 +79,8 @@ int main()
         }
         sw1_last_state = sw1_pressed;
 
-        //pressing sw2 increases brightness
-        if (sw2_pressed && leds_on)
+        //pressing sw0 decreases brightness
+        if (sw0_pressed && leds_on)
         {
             if (brightness >= STEP)
             {
@@ -92,8 +92,8 @@ int main()
             }
         }
 
-        //pressing sw0 increases brightness
-        if (sw0_pressed && leds_on)
+        //pressing sw2 increases brightness
+        if (sw2_pressed && leds_on)
         {
             brightness += STEP;
             if (brightness > PWM_WRAP)
