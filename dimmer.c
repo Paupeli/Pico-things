@@ -62,18 +62,13 @@ int main()
         // sw1 toggles the leds on & off
         if (sw1_pressed && !sw1_last_state)
         {
-            if (leds_on && brightness == 0)
+            if (brightness == 0)
             {
                 brightness = PWM_DEFAULT_LEVEL; //pressing sw1 when leds are dimmed to 0 sets the leds to 50%
             }
             else
             {
                 leds_on = !leds_on;
-
-                if (leds_on && brightness == 0)
-                {
-                    brightness = PWM_DEFAULT_LEVEL;
-                }
             }
             sleep_ms(50); //button debounce
         }
