@@ -2,6 +2,7 @@
 #include "pico/stdlib.h"
 #include "hardware/pwm.h"
 #include "hardware/gpio.h"
+#include "pico/util/queue.h"
 
 #define ROT_A_PIN 10
 #define ROT_B_PIN 11
@@ -15,24 +16,13 @@
 
 const int pwm_pins[] = {20, 21, 22};
 
-//states
-volatile int encoder_delta = 0;
-bool leds_enabled = false;
-uint16_t current_brightness = PWM_DEFAULT_LEVEL;
+static queue_t encoder_queue; //queue to pass steps from the interrupt handler
 
 void encoder_callbck(uint gpio, uint32_t events) //ISR for the rotary encoder
 {
-    if (gpio == ROT_A_PIN)
-    {
-        if (gpio_get(ROT_B_PIN))
-        {
-            encoder_delta--; //rotate counter-clockwise
-        }
-        else
-        {
-            encoder_delta++; //rotate clockwise
-        }
-    }
+    int val = 0;
+    val = gpio_get(ROT_B_PIN) ? -1 : 1; //clockwise 1, counter-clockwise -1
+    queue_try_add((&encoder_queue), &val);
 }
 
 void init_pwm(uint pin) //pwm setup
@@ -56,6 +46,8 @@ int main()
 {
     stdio_init_all();
 
+    queue_init(&encoder_queue, sizeof(int), 32);
+
     //initialize pins
     gpio_init(ROT_A_PIN);
     gpio_set_dir(ROT_A_PIN, GPIO_IN);
@@ -71,15 +63,23 @@ int main()
     gpio_set_irq_enabled_with_callback(ROT_A_PIN, GPIO_IRQ_EDGE_RISE, true, &encoder_callbck);
 
     //initialize PWM
-    for (int i = 0; i < LEDS; i++) init_pwm(pwm_pins[i]);
+    for (int i = 0; i < LEDS; i++)
+    {
+        gpio_set_function(pwm_pins[i], GPIO_FUNC_PWM);
+        uint slice = pwm_gpio_to_slice_num(pwm_pins[i]);
+        pwm_set_wrap(slice, PWM_WRAP);
+        pwm_set_enabled(slice, true);
+    }
 
+    bool leds_enabled = false;
+    uint16_t current_brightness = PWM_DEFAULT_LEVEL;
     bool last_sw_state = true;
 
     while (true)
     {
         bool current_sw_state = gpio_get(ROT_SW_PIN);
 
-        if (last_sw_state == true && current_sw_state == false) //button toggle (falling edge detection)
+        if (last_sw_state == true && current_sw_state == false) //button toggle (falling edge)
         {
             if (leds_enabled && current_brightness == 0)
             {
@@ -89,35 +89,39 @@ int main()
             {
                 leds_enabled = !leds_enabled;
             }
-            while (!gpio_get(ROT_SW_PIN)) //blocking wait for release to prevent multiple toggles
+
+            if (leds_enabled) //update leds
             {
-                sleep_ms(10);
+                update_leds(current_brightness);
             }
+            else
+            {
+                update_leds(0);
+            }
+
+            while (!gpio_get(ROT_SW_PIN)) sleep_ms(10); //debounce
         }
         last_sw_state = current_sw_state;
 
-        int32_t moved = encoder_delta; //encoder movement handling
-        encoder_delta = 0;
-
-        if (leds_enabled && moved != 0) //change brightness if leds are on
+        //process encoder movement & calculate brightness
+        int step_value;
+        while (queue_try_remove(&encoder_queue, &step_value))
         {
-            int new_val = (int)current_brightness + (moved * BRIGHTNESS_STEP);
+            int new_val = (int)current_brightness + (step_value * BRIGHTNESS_STEP);
             if (new_val > PWM_WRAP) new_val = PWM_WRAP;
             if (new_val < 0) new_val = 0;
-
             current_brightness = (uint16_t)new_val;
+            if (leds_enabled)
+            {
+                update_leds(current_brightness);
+            }
+            else
+            {
+                update_leds(0);
+            }
         }
 
-        if (leds_enabled)
-        {
-            update_leds(current_brightness);
-        }
-        else
-        {
-            update_leds(0); //leds off
-        }
-        printf("Brightness: %d /999\n", current_brightness); //for testing
-
-        sleep_ms(5); //5ms sleep
+        printf("Brightness: %d /999\n", current_brightness); // for testing
+        sleep_ms(5);
     }
 }
