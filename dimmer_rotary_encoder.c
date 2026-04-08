@@ -90,14 +90,7 @@ int main()
                 leds_enabled = !leds_enabled;
             }
 
-            if (leds_enabled) //update leds
-            {
-                update_leds(current_brightness);
-            }
-            else
-            {
-                update_leds(0);
-            }
+            update_leds(leds_enabled ? current_brightness : 0); //update leds
 
             while (!gpio_get(ROT_SW_PIN)) sleep_ms(10); //debounce
         }
@@ -107,17 +100,13 @@ int main()
         int step_value;
         while (queue_try_remove(&encoder_queue, &step_value))
         {
-            int new_val = (int)current_brightness + (step_value * BRIGHTNESS_STEP);
-            if (new_val > PWM_WRAP) new_val = PWM_WRAP;
-            if (new_val < 0) new_val = 0;
-            current_brightness = (uint16_t)new_val;
             if (leds_enabled)
             {
+                int new_val = (int)current_brightness + (step_value * BRIGHTNESS_STEP);
+                if (new_val > PWM_WRAP) new_val = PWM_WRAP;
+                if (new_val < 0) new_val = 0;
+                current_brightness = (uint16_t)new_val;
                 update_leds(current_brightness);
-            }
-            else
-            {
-                update_leds(0);
             }
         }
 
