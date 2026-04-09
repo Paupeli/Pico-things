@@ -1,4 +1,4 @@
-#include <stdio.h>
+ude <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "hardware/uart.h"
@@ -17,16 +17,16 @@
 #define CALIB  2
 #define RUN    3
 
-
-//global states
-const int stepper_pins[] = {IN1, IN2, IN3, IN4};
-bool is_calibrated = false;
-int steps_per_rev = 0;
 volatile bool edge_detected = false;
-static int global_step_index = 0;
+
+typedef struct{
+    const int stepper_pins[4];
+    bool is_calibrated;
+    int steps_per_rev;
+    int global_step_index;
+} SystemState;
 
 //half stepping sequence
-
 static const uint turn_seq[8][4] = {
     {1, 0, 0, 0},
     {1, 1, 0, 0},
@@ -38,8 +38,7 @@ static const uint turn_seq[8][4] = {
     {1, 0, 0, 1}
 };
 
-//helpers
-
+//irq callback
 void opto_callback(uint gpio, uint32_t event_mask)
 {
     if (event_mask & GPIO_IRQ_EDGE_FALL)
@@ -53,68 +52,72 @@ void blink_led(int ms)
     gpio_put(LED, 0);
 }
 
-
 //moves the motor
-void stepper_move(int steps)
+void stepper_move(SystemState *state, int steps)
 {
     int direction = (steps > 0) ? 1 : -1;
     int abs_steps = abs(steps);
 
     for (int i = 0; i < abs_steps; i++)
     {
-        global_step_index += direction;
-        int row = global_step_index & 7;
+        state->global_step_index =
+            (state->global_step_index + direction + 8) % 8;
 
         for (int j = 0; j < 4; j++)
-        {
-            gpio_put(stepper_pins[j], turn_seq[row][j]);
-        }
+            gpio_put(state->stepper_pins[j], turn_seq[state->global_step_index][j]);
 
-        sleep_ms(4);
+        sleep_ms(1);
     }
 }
 
 //moves until falling edge is detected
-int stepper_find_edge()
+int stepper_find_edge(SystemState *state)
 {
     int count = 0;
     edge_detected = false;
-    stepper_move(200);
+
+    while (gpio_get(OPTO_PIN) == 0)
+    {
+        stepper_move(state,1);
+    }
 
     while (!edge_detected)
     {
-        stepper_move(1);
+        stepper_move(state, 1);
         count++;
-
-        if (count > 15000) return -1; //timeout
     }
-    return count + 200; //for better accuracy
+    sleep_us(200); //debounce
+    return count;
 }
 
-void calibration()
+void calibration(SystemState *state)
 {
-    is_calibrated = false;
+    state->is_calibrated = false;
 
+    stepper_find_edge(state); //alignment
 
-    if (stepper_find_edge() == -1)
-    {
-        printf("Calibration error.\n");
-        return;
-    }
-
-    //calibrate 3 rounds
     int total = 0;
-    for (int i = 0; i < 3; i++)
+    int iterations = 3;
+
+    for (int i = 0; i < iterations; i++)
     {
-        int r = stepper_find_edge();
-        if (r == -1) return;
-        total += r;
-        printf("Rotation %d: %d steps\n", i + 1, r);
+        total += stepper_find_edge(state);
     }
 
-    steps_per_rev = total / 3;
-    is_calibrated = true;
-    printf("Calibration finished. Steps: %d\n", steps_per_rev);
+    state->steps_per_rev = total / iterations;
+
+    int gap_width = 0;
+    while (gpio_get(OPTO_PIN) == 0) {
+        stepper_move(state, 1);
+        gap_width++;
+    }
+
+    stepper_move(state, -(gap_width / 2));
+
+    state->global_step_index = 0;
+    state->is_calibrated = true;
+
+    printf("Calibration finished. Average steps: %d.\n", state->steps_per_rev);
 }
 
 int get_command(int* n_out)
@@ -141,26 +144,32 @@ int get_command(int* n_out)
     if (strcmp(buffer, "calib") == 0) return CALIB;
     if (strncmp(buffer, "run", 3) == 0)
     {
-        if (strlen(buffer) > 4) *n_out = atoi(buffer + 4);
-        else *n_out = 8; //full round
+        if (sscanf(buffer, "run %d", n_out) != 1)
+        *n_out = 8; //full round
         return RUN;
     }
     return NONE;
 }
 
 //main
-
 int main()
 {
     stdio_init_all();
+
+    SystemState state = {
+        .stepper_pins = {IN4, IN3, IN2, IN1},
+        .is_calibrated = false,
+        .steps_per_rev = 0,
+        .global_step_index = 0
+    };
 
     gpio_init(LED);
     gpio_set_dir(LED, GPIO_OUT);
 
     for (int i = 0; i < 4; i++)
     {
-        gpio_init(stepper_pins[i]);
-        gpio_set_dir(stepper_pins[i], GPIO_OUT);
+        gpio_init(state.stepper_pins[i]);
+        gpio_set_dir(state.stepper_pins[i], GPIO_OUT);
     }
 
     gpio_init(OPTO_PIN);
@@ -174,30 +183,31 @@ int main()
 
         if (command == STATUS)
         {
-            printf("Calibrated: %s\n", is_calibrated ? "Yes" : "No");
-            if (is_calibrated) printf("Steps per revolution: %d\n", steps_per_rev);
-            else printf("Steps not available\n");
+            printf("Calibrated: %s\n", state.is_calibrated ? "Yes" : "No");
+            if (state.is_calibrated) printf("Steps per revolution: %d\n", state.steps_per_rev);
+            else printf("Steps not available.\n");
         }
         else if (command == CALIB)
         {
-            calibration();
+            calibration(&state);
         }
         else if (command == RUN)
         {
-            if (!is_calibrated)
+            if (!state.is_calibrated)
             {
                 printf("Error, calibrate first.\n");
             }
             else
             {
-                int target = (steps_per_rev * n_val) / 8;
+                int target = (state.steps_per_rev * n_val) / 8;
                 printf("Running %d steps (%d/8 revs)\n", target, n_val);
-                stepper_move(target);
 
-                if (n_val >= 8) //led for testing
+                for(int i = 0; i < n_val; i++)
                 {
-                    blink_led(200);
+                    blink_led(100);
+                    sleep_ms(100);
                 }
+                stepper_move(&state, target);
             }
         }
     }
