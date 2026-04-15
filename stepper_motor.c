@@ -38,7 +38,7 @@ typedef struct
 
 SystemState sys = {false, 0, 0};
 
-queue_t edge_fifo;
+static queue_t edge_fifo;
 
 //interrupt handler
 void opto_callback(uint gpio, uint32_t event_mask)
