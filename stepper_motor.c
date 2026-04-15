@@ -1,8 +1,8 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
+#include "pico/util/queue.h"
 
 #define OPTO_PIN 28
 #define IN1 2
@@ -14,6 +14,7 @@
 #define STATUS 1
 #define CALIB  2
 #define RUN    3
+#define BUFFER_SIZE 32
 
 //stepper pins& half stepping sequence
 static const int stepper_pins[4] = {IN1, IN2, IN3, IN4};
@@ -36,21 +37,41 @@ typedef struct
 } SystemState;
 
 SystemState sys = {false, 0, 0};
-volatile bool edge_detected = false;
 
-//irq callback
+queue_t edge_fifo;
+
+//interrupt handler
 void opto_callback(uint gpio, uint32_t event_mask)
 {
     if (event_mask & GPIO_IRQ_EDGE_FALL)
     {
-        edge_detected = true;
+        bool event = true;
+        queue_try_add(&edge_fifo, &event);
     }
 }
 
-void motor_step(int direction) //executes one step
+//check for falling edge
+bool check_for_edge()
 {
-    sys.current_step_idx = (sys.current_step_idx + direction + 8) % 8;
-    for (int i = 0; i < 4; i++) //loops 4 times to set high/low state
+    bool temp;
+    if (queue_try_remove(&edge_fifo, &temp))
+    {
+        return true;
+    }
+    return false;
+}
+
+//clear the queue
+void clear_edges()
+{
+    bool temp;
+    while (queue_try_remove(&edge_fifo, &temp));
+}
+
+void motor_step(int direction) //move the motor one half step
+{
+    sys.current_step_idx = (sys.current_step_idx + direction + 8) % 8; //update index and wrap around
+    for (int i = 0; i < 4; i++) //loop 4 times to set high/low state
     {
         gpio_put(stepper_pins[i], turn_seq[sys.current_step_idx][i]);
     }
@@ -64,8 +85,8 @@ void calibration()
     sys.is_calibrated = false;
 
     //move until first falling edge is found
-    edge_detected = false;
-    while (!edge_detected)
+    clear_edges();
+    while (!check_for_edge())
     {
         motor_step(1);
     }
@@ -75,16 +96,16 @@ void calibration()
     for (int i = 0; i < 3; i++)
     {
         int steps_this_rev = 0;
-        edge_detected = false;
+        clear_edges();
 
 
-        for (int j = 0; j < 100; j++) //clear the current tab before looking for next falling edge
+        for (int j = 0; j < 100; j++) //move slightly before looking for next falling edge
         {
             motor_step(1);
             steps_this_rev++;
         }
 
-        while (!edge_detected)
+        while (!check_for_edge()) //count until next falling edge is found
         {
             motor_step(1);
             steps_this_rev++;
@@ -117,13 +138,13 @@ void calibration()
 //parser
 int get_command(int* n_out)
 {
-    static char buffer[32];
-    static int pos = 0;
+    static char buffer[BUFFER_SIZE]; //character store
+    static int pos = 0; //tracks cursor position in the buffer
 
-    int c = getchar_timeout_us(0);
+    int c = getchar_timeout_us(0); //character check & return if no character was entered
     if (c == PICO_ERROR_TIMEOUT) return NONE;
 
-    if (c == '\r' || c == '\n')
+    if (c == '\r' || c == '\n') //null terminator, cursor reset & newline
     {
         buffer[pos] = '\0';
         pos = 0;
@@ -133,16 +154,22 @@ int get_command(int* n_out)
         if (strcmp(buffer, "calib") == 0) return CALIB;
         if (strncmp(buffer, "run", 3) == 0)
         {
-            if (strlen(buffer) > 4) *n_out = atoi(buffer + 4);
-            else *n_out = 8;
-            return RUN;
+            if (buffer[3] == '\0')
+            {
+                *n_out = 8;
+                return RUN;
+            }
+            if (sscanf(buffer + 3, "%d", n_out) == 1)
+            {
+                return RUN;
+            }
         }
         printf("Error, unknown command: %s\n", buffer);
         return NONE;
     }
     else
     {
-        if (pos < 31)
+        if (pos < BUFFER_SIZE - 1)
         {
             buffer[pos++] = (char)c;
             putchar(c);
@@ -154,6 +181,8 @@ int get_command(int* n_out)
 int main()
 {
     stdio_init_all();
+
+    queue_init(&edge_fifo, sizeof(bool), 8);
 
     for (int i = 0; i < 4; i++)
     {
@@ -195,7 +224,7 @@ int main()
             else
             {
                 if (n_val == 0) n_val = 8;
-                int target_steps = (sys.steps_per_rev * n_val) / 8;
+                int target_steps = (sys.steps_per_rev * n_val) / 8; //calculate steps for fraction of a turn n/8
                 printf("Running %d/8 revolution: %d steps.\n", n_val, target_steps);
                 for (int i = 0; i < target_steps; i++) motor_step(1);
             }
