@@ -10,10 +10,10 @@
 #define IN3 6
 #define IN4 13
 
-#define NONE   0
+#define NONE 0
 #define STATUS 1
-#define CALIB  2
-#define RUN    3
+#define CALIB 2
+#define RUN 3
 #define BUFFER_SIZE 32
 
 //stepper pins& half stepping sequence
@@ -161,7 +161,10 @@ int get_command(int* n_out)
             }
             if (sscanf(buffer + 3, "%d", n_out) == 1)
             {
-                return RUN;
+                if (*n_out >= 1 && *n_out <= 8)
+                {
+                    return RUN;
+                }
             }
         }
         printf("Error, unknown command: %s\n", buffer);
@@ -223,7 +226,6 @@ int main()
             }
             else
             {
-                if (n_val == 0) n_val = 8;
                 int target_steps = (sys.steps_per_rev * n_val) / 8; //calculate steps for fraction of a turn n/8
                 printf("Running %d/8 revolution: %d steps.\n", n_val, target_steps);
                 for (int i = 0; i < target_steps; i++) motor_step(1);
