@@ -96,14 +96,6 @@ void calibration()
     for (int i = 0; i < 3; i++)
     {
         int steps_this_rev = 0;
-        clear_edges();
-
-
-        for (int j = 0; j < 100; j++) //move slightly before looking for next falling edge
-        {
-            motor_step(1);
-            steps_this_rev++;
-        }
 
         while (!check_for_edge()) //count until next falling edge is found
         {
@@ -115,7 +107,6 @@ void calibration()
     }
 
     sys.steps_per_rev = total_steps / 3;
-
     int gap_width = 0; //measure gap width and centre
 
     while (gpio_get(OPTO_PIN) == 0)
@@ -159,7 +150,7 @@ int get_command(int* n_out)
                 *n_out = 8;
                 return RUN;
             }
-            if (sscanf(buffer + 3, "%d", n_out) == 1)
+            if (sscanf(buffer, "run %d", n_out) == 1)
             {
                 if (*n_out >= 1 && *n_out <= 8)
                 {
