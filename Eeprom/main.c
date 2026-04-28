@@ -31,6 +31,7 @@ int main() {
     if (led_state_is_valid(&current_ls)) { //check if state and inverted state match
         led_mask = current_ls.state;
     } else {
+        printf("No valid state found.");
         led_mask = 0b010; //middle led on by default
     }
 
@@ -39,19 +40,16 @@ int main() {
     }
     print_led_state(led_mask);
 
-    bool prev_button_state[3]; //check the state of leds
+    bool prev_button_state[3]; //check the baseline of buttons
     for(int i=0; i<3; i++) {
         prev_button_state[i] = gpio_get(BUTTON_PINS[i]);
     }
-
-    //works with this as well
-    //bool prev_button_state[3] = {true, true, true};
 
     while (true) {
         bool state_changed = false;
 
         for (int i = 0; i < 3; i++) {
-            bool current_button = gpio_get(BUTTON_PINS[i]);
+            bool current_button = gpio_get(BUTTON_PINS[i]); //check the buttons current state
 
             //falling edge detection
             if (current_button == false && prev_button_state[i] == true) {
