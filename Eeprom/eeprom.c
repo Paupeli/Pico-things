@@ -34,25 +34,32 @@ bool led_state_is_valid(ledstate *ls) {
 
 //take high& low bytes, send them to eeprom and read led state
 void read_led_state(ledstate *ls) {
-    uint8_t address_buffer[2] = {LED_STATE_ADDRESS >> 8, LED_STATE_ADDRESS & 0xFF};
+    uint8_t address_buffer[2] = {
+        (uint8_t)(LED_STATE_ADDRESS >> 8),
+        (uint8_t)(LED_STATE_ADDRESS & 0xFF)
+    };
+    uint8_t data_buffer[2] = {0, 0};
+
     i2c_write_blocking(i2c0, EEPROM_ADDRESS, address_buffer, 2, true);
-    i2c_read_blocking(i2c0, EEPROM_ADDRESS, (uint8_t*)ls, 2, false);
+
+    i2c_read_blocking(i2c0, EEPROM_ADDRESS, data_buffer, 2, false);
+
+    ls->state = data_buffer[0];
+    ls->inverted_state = data_buffer[1];
 }
 
 void print_led_state(uint8_t state) {
     uint64_t now = time_us_64();
     float time_since_power_up = now / 1000000.0;
 
-    //print timestamp
-    printf("[%0.2fs] ", time_since_power_up);
-
-    //print hex state
-    printf("State: 0x%02X (", state);
+    //print timestamp & state
+    printf("%0.2fs ", time_since_power_up);
+    printf("State: 0x%02X ", state);
 
     //print led status
     for (int i = 0; i < 3; i++) {
         bool is_on = (state >> i) & 1; //bit shifting to check if bit is 1 or 0
-        printf("LED%d: %s", i, is_on ? "ON" : "OFF");
+        printf("\nLED%d: %s", i, is_on ? "ON" : "OFF");
     }
-    printf(")\n");
+    printf("\n");
 }
